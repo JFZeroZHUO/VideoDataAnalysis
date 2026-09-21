@@ -61,7 +61,7 @@ try {
   assert.equal(await page.locator('.keyword-search-action').isDisabled(), false);
   await page.getByRole('status').filter({ hasText: '当前助手 3.0.0 需要更新' }).waitFor();
   assert.match(await page.locator('.local-extension-upgrade').innerText(), /请勿卸载/);
-  assert.equal(await page.getByRole('link', { name: '下载 3.0.1 修复版' }).getAttribute('href'), '/downloads/douyin-helper.zip?v=3.0.1');
+  assert.equal(await page.getByRole('link', { name: '下载 3.0.2 修复版' }).getAttribute('href'), '/downloads/douyin-helper.zip?v=3.0.2');
   await page.getByRole('button', { name: '导出素材CSV' }).click();
   await page.screenshot({ path: 'storage/web-smoke-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

@@ -13,18 +13,30 @@ const video = (id = '7382727182054853891') => `https://www.douyin.com/video/${id
 const row = (overrides = {}) => ({ sourceUrl: video(), title: '舞蹈教学：300万播放，收藏999', rawText: '舞蹈教学：300万播放，收藏999', visibleLikeText: '1.2万', ...overrides });
 const filterState = { verified: true, sort: 'most_liked', timeRange: 'half_year', contentType: 'video' };
 
-function harness({ rows = [row()], readiness = [], detailVerified = true, filterError = false, maxScrollRounds = 0 } = {}) {
+function harness({ rows = [row()], readiness = [], detailVerified = true, filterError = false, maxScrollRounds = 0,
+  gatewaySearches = 0, submitDestination, missingSearchForm = false } = {}) {
   let nextId = 1;
-  const tabs = new Map(); const visited = []; const phases = []; const batches = []; const injected = []; const filterQueries = [];
+  const tabs = new Map(); const visited = []; const submitted = []; const phases = []; const batches = []; const injected = []; const filterQueries = [];
+  const values = new Map(); let gateway = false;
   const chrome = {
     tabs: {
       create: async (settings) => { const created = { id: nextId++, windowId: 1, status: 'complete', ...settings }; tabs.set(created.id, created); return created; },
       get: async (id) => { if (!tabs.has(id)) throw new Error('tab missing'); return { ...tabs.get(id) }; },
-      update: async (id, settings) => { const item = tabs.get(id); if (!item) throw new Error('tab missing'); Object.assign(item, settings); if (settings.url) visited.push(settings.url); return { ...item }; }
+      update: async (id, settings) => { const item = tabs.get(id); if (!item) throw new Error('tab missing'); Object.assign(item, settings); if (settings.url) { visited.push(settings.url); gateway = false; } return { ...item }; }
     },
     scripting: { executeScript: async ({ target, func, args = [] }) => {
       injected.push(func.name);
-      if (func.name === 'inspectDouyinPage') return [{ result: readiness.length ? readiness.shift() : { count: 1, detail: true } }];
+      if (func.name === 'inspectDouyinPage') return [{ result: readiness.length ? readiness.shift() : { count: 1, detail: true, gatewayError: gateway } }];
+      if (func.name === 'interactDouyinSearch') {
+        const { action, keyword } = args[0];
+        if (missingSearchForm) return [{ result: { ready: false } }];
+        if (action === 'fill') values.set(target.tabId, keyword);
+        if (action === 'submit') {
+          submitted.push(keyword); gateway = submitted.length <= gatewaySearches;
+          tabs.get(target.tabId).url = submitDestination || `https://www.douyin.com/root/search/${encodeURIComponent(keyword)}?aid=platform&type=general`;
+        }
+        return [{ result: { ready: true, submitted: action === 'submit', value: values.get(target.tabId) || '' } }];
+      }
       if (func.name === 'extractSearchCards') return [{ result: { rows: typeof rows === 'function' ? rows(tabs.get(target.tabId).url) : rows } }];
       if (func.name === 'extractDouyinDetail') {
         const candidate = args[0];
@@ -42,13 +54,14 @@ function harness({ rows = [row()], readiness = [], detailVerified = true, filter
       return filterState;
     } });
   const hooks = { progress: async (patch) => phases.push(structuredClone(patch)), batch: async (batch) => batches.push(...structuredClone(batch)) };
-  return { chrome, collector, hooks, tabs, visited, phases, batches, injected, filterQueries };
+  return { chrome, collector, hooks, tabs, visited, submitted, phases, batches, injected, filterQueries };
 }
 
 test('普通搜索仅原词逐一执行，不使用隐藏扩词或母婴词，且不访问详情', async () => {
   const h = harness();
   await h.collector.runTask({ keywords: ['舞蹈', '咖啡机'], queries: [{ query: '纸尿裤AI' }], maxResults: 20, timeRange: 'one_week', requireAiEvidence: false }, h.hooks);
-  assert.deepEqual(h.visited, ['舞蹈', '咖啡机'].map((keyword) => `https://www.douyin.com/search/${encodeURIComponent(keyword)}?type=general`));
+  assert.deepEqual(h.submitted, ['舞蹈', '咖啡机']);
+  assert.deepEqual(h.visited, [], '不再直接导航到拼接的搜索网址');
   assert.equal(h.tabs.size, 1);
   assert.equal(h.injected.includes('extractDouyinDetail'), false);
   assert.deepEqual(h.batches.map((candidate) => candidate.query), ['舞蹈', '咖啡机']);
@@ -63,7 +76,7 @@ test('普通搜索仅原词逐一执行，不使用隐藏扩词或母婴词，�
 test('总预算均分到每词：前词额满仍执行下一词，同一视频保留每个来源词', async () => {
   const h = harness({ rows: [1, 2, 3, 4].map((id) => row({ sourceUrl: video(`738272718205485389${id}`) })) });
   await h.collector.runTask({ keywords: ['舞蹈', '爵士'], maxResults: 3, requireAiEvidence: false }, h.hooks);
-  assert.equal(h.visited.length, 2);
+  assert.equal(h.submitted.length, 2);
   assert.deepEqual(h.batches.map((candidate) => candidate.query), ['舞蹈', '舞蹈', '爵士']);
   assert.equal(h.batches[0].sourceUrl, h.batches[2].sourceUrl);
   assert.equal(h.phases.at(-1).collectionDiagnostics.collectedCount, 2);
@@ -73,7 +86,7 @@ test('总预算均分到每词：前词额满仍执行下一词，同一视频�
 test('预算小于队列长度也每词至少采集一条，不会漏掉后续关键词', async () => {
   const h = harness({ rows: [row(), row({ sourceUrl: video('7382727182054853892') })] });
   await h.collector.runTask({ keywords: ['舞蹈', '爵士', '街舞'], maxResults: 1 }, h.hooks);
-  assert.equal(h.visited.length, 3);
+  assert.equal(h.submitted.length, 3);
   assert.deepEqual(h.batches.map((candidate) => candidate.query), ['舞蹈', '爵士', '街舞']);
   assert.match(h.phases.at(-1).message, /各词累计 3\/3 条/);
 });
@@ -129,7 +142,7 @@ test('登录和安全验证暂停等待人工完成，然后从当前词继续',
   assert.equal(h.phases.some((phase) => phase.phase === 'waiting_login'), true);
   assert.equal(h.phases.some((phase) => phase.phase === 'waiting_verification'), true);
   assert.equal(h.batches.length, 1);
-  assert.equal(h.visited.length, 1);
+  assert.deepEqual(h.submitted, ['舞蹈']);
 });
 
 test('验证码未完成不会采集卡片或尝试自动解题', async () => {
@@ -149,6 +162,56 @@ test('标签页关闭立即报告，并允许用户重新发起任务', async ()
   assert.equal(h.batches.length, 1);
 });
 
+test('首页先完成加载，随后通过搜索框提交，不直接跳搜索链接', async () => {
+  const h = harness(); const original = h.chrome.tabs.get; let loading = 3;
+  h.chrome.tabs.get = async (id) => ({ ...await original(id), status: loading-- > 0 ? 'loading' : 'complete' });
+  const execute = h.chrome.scripting.executeScript;
+  h.chrome.scripting.executeScript = async (params) => { assert.ok(loading < 0, '首页完成加载后才读搜索框'); return execute(params); };
+  await h.collector.runTask({ keywords: ['奶瓶'] }, h.hooks);
+  assert.deepEqual(h.submitted, ['奶瓶']);
+  assert.deepEqual(h.visited, []);
+});
+
+test('搜索遭遇一次502时只回首页重试原词，恢复后继续保存', async () => {
+  const h = harness({ gatewaySearches: 1 });
+  await h.collector.runTask({ keywords: ['奶瓶'] }, h.hooks);
+  assert.deepEqual(h.submitted, ['奶瓶', '奶瓶']);
+  assert.deepEqual(h.visited, ['https://www.douyin.com/']);
+  assert.equal(h.phases.filter((item) => item.phase === 'retrying_search').length, 1);
+  assert.equal(h.batches.length, 1);
+});
+
+test('搜索按钮触发完整页面导航时，等待加载完成再读取，不把注入上下文销毁当失败', async () => {
+  const h = harness(); const get = h.chrome.tabs.get; const execute = h.chrome.scripting.executeScript; let loading = 0;
+  h.chrome.tabs.get = async (id) => ({ ...await get(id), status: loading-- > 0 ? 'loading' : 'complete' });
+  h.chrome.scripting.executeScript = async (params) => {
+    if (params.func.name === 'interactDouyinSearch' && params.args[0].action === 'submit') {
+      await execute(params); loading = 3; throw new Error('Execution context was destroyed');
+    }
+    if (loading > 0) throw new Error('尚未完成页面导航');
+    return execute(params);
+  };
+  await h.collector.runTask({ keywords: ['奶瓶'] }, h.hooks);
+  assert.equal(h.batches.length, 1); assert.deepEqual(h.submitted, ['奶瓶']);
+});
+
+test('持续502停止并明确网关故障，不误报无视频，不无限重试', async () => {
+  const h = harness({ gatewaySearches: 99 });
+  await assert.rejects(h.collector.runTask({ keywords: ['奶瓶'] }, h.hooks), /502 Bad Gateway/);
+  assert.equal(h.submitted.length, 2);
+  assert.deepEqual(h.visited, ['https://www.douyin.com/']);
+  assert.equal(h.batches.length, 0); assert.equal(h.filterQueries.length, 0);
+});
+
+test('未找到搜索框或按钮没有进入对应关键词页时，不采集首页/旧关键词', async () => {
+  const missing = harness({ missingSearchForm: true });
+  await assert.rejects(missing.collector.runTask({ keywords: ['奶瓶'] }, missing.hooks), /搜索框/);
+  assert.deepEqual(missing.visited, []); assert.equal(missing.batches.length, 0);
+  const wrong = harness({ submitDestination: 'https://www.douyin.com/root/search/纸尿裤' });
+  await assert.rejects(wrong.collector.runTask({ keywords: ['奶瓶'] }, wrong.hooks), /未进入对应搜索结果页/);
+  assert.equal(wrong.batches.length, 0); assert.equal(wrong.filterQueries.length, 0);
+});
+
 test('扩展产物可以实际构建，ZIP仅含允许文件，不含Node或本机密钥/数据库', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'vda-extension-test-'));
   try {
@@ -156,7 +219,7 @@ test('扩展产物可以实际构建，ZIP仅含允许文件，不含Node或本�
     const archive = unzipSync(new Uint8Array(await readFile(result.zipPath)));
     assert.deepEqual(Object.keys(archive).sort(), ['background.js', 'bridge.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js']);
     const manifest = JSON.parse(new TextDecoder().decode(archive['manifest.json']));
-    assert.equal(manifest.version, '3.0.1');
+    assert.equal(manifest.version, '3.0.2');
     assert.deepEqual(manifest.host_permissions, ['https://www.douyin.com/*']);
     assert.equal(manifest.permissions.some((permission) => ['cookies', 'debugger', '<all_urls>'].includes(permission)), false);
     const source = new TextDecoder().decode(archive['background.js']);

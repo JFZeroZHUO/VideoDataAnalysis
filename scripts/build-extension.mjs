@@ -46,5 +46,5 @@ export async function buildExtension({ outputDirectory = join(root, 'build/local
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const result = await buildExtension();
-  console.log(`抖音本机助手 3.0.1 已打包：${result.zipPath}`);
+  console.log(`抖音本机助手 3.0.2 已打包：${result.zipPath}`);
 }

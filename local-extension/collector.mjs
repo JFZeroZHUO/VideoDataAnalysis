@@ -1,5 +1,6 @@
 import { extractSearchCards, extractDouyinDetail, normalizeDouyinRows, createCollectionDiagnostics } from 'douyin-dom-core';
 import { resolveExtensionCard } from './card-navigation.mjs';
+import { interactDouyinSearch } from './search-form.mjs';
 import { applyDouyinPopularFilters } from '../server/douyin-search-filter.mjs';
 import { sourceUrlFromDouyinModalUrl } from '../server/douyin-card-schema.mjs';
 import { parseCompactNumber } from '../server/number-utils.mjs';
@@ -16,7 +17,10 @@ export function inspectDouyinPage() {
   const dialogText = dialogs.map((item) => item.innerText || '').join('\n');
   const verification = captcha || /请完成.{0,12}验证|拖动滑块|请选择所有符合|请依次点击/.test(dialogText);
   const login = !verification && /扫码登录|验证码登录|登录后.{0,12}(?:查看|搜索)|手机号登录/.test(dialogText);
-  return { verification, login, count: document.querySelectorAll('.search-result-card, a[href*="/video/"], a[href*="modal_id="]').length,
+  const count = document.querySelectorAll('.search-result-card, a[href*="/video/"], a[href*="modal_id="]').length;
+  const errorHeading = `${document.title || ''}\n${[...document.querySelectorAll('h1, h2')].map((item) => item.innerText || '').join('\n')}`;
+  const gatewayError = !count && /502\s*(?:Bad\s*Gateway|错误的网关|网关错误)/i.test(errorHeading);
+  return { verification, login, gatewayError, count,
     detail: Boolean(document.querySelector('[data-e2e="video-detail"]')),
     noResults: /暂无搜索结果|没有找到相关结果|未找到相关视频/.test(document.body?.innerText || '') };
 }
@@ -88,6 +92,9 @@ export function createCollector(chromeApi, options = {}) {
   }
   async function navigate(tabId, url) {
     await chromeApi.tabs.update(tabId, { url });
+    await waitForDestination(tabId, url);
+  }
+  async function waitForDestination(tabId, url) {
     for (let index = 0; index < 60; index += 1) {
       const current = await chromeApi.tabs.get(tabId).catch(() => null);
       if (!current) throw new Error('采集标签页已关闭，请重新开始搜索。');
@@ -96,19 +103,60 @@ export function createCollector(chromeApi, options = {}) {
     }
     throw new Error('抖音页面加载超时，请检查网络后重新搜索。');
   }
-  async function ready(tabId, hooks, { detail = false } = {}) {
+  async function ready(tabId, hooks, { detail = false, searchForm = false } = {}) {
     let awaitingUser = false;
     for (let index = 0; index < attentionPolls; index += 1) {
       const state = await evaluate(tabId, inspectDouyinPage);
+      if (state.gatewayError) throw Object.assign(new Error('抖音搜索页面返回 502 Bad Gateway，未加载视频结果。这是访问抖音时的网关错误，不是没有匹配视频，也不是 Vercel 网站故障。请在同一浏览器手动搜索确认可用后重试。'), { code: 'DOUYIN_GATEWAY_ERROR' });
       if (state.verification || state.login) {
         if (!awaitingUser) { await chromeApi.tabs.update(tabId, { active: true }); awaitingUser = true; }
         await hooks.progress({ phase: state.verification ? 'waiting_verification' : 'waiting_login',
           message: state.verification ? '已暂停：请在抖音标签页手动完成安全验证，完成后自动继续。' : '已暂停：请在抖音标签页登录自己的账号，完成后自动继续。' });
-      } else if ((detail ? state.detail : state.count > 0 || state.noResults)) return state;
-      else if (!awaitingUser && index >= 10) throw new Error(detail ? '视频详情没有加载或不可访问，不能核验 AI 声明。' : '搜索页没有加载出可识别的视频卡片；请在抖音确认关键词结果后重试。');
+      } else if (searchForm ? (await evaluate(tabId, interactDouyinSearch, { action: 'inspect' }))?.ready
+        : (detail ? state.detail : state.count > 0 || state.noResults)) return state;
+      else if (!awaitingUser && index >= 10) throw new Error(searchForm ? '抖音页面未加载出唯一可用的搜索框，未直接跳转搜索网址。请在抖音确认搜索框可用后重试。'
+        : detail ? '视频详情没有加载或不可访问，不能核验 AI 声明。' : '搜索页没有加载出可识别的视频卡片；请在抖音确认关键词结果后重试。');
       await wait(3000);
     }
     throw new Error('等待登录或安全验证超时；已入库素材保留，完成验证后请重新搜索。');
+  }
+
+  async function searchByForm(tabId, keyword, hooks) {
+    // This URL is only an expected-keyword check, never a navigation target.
+    const expected = `https://www.douyin.com/search/${encodeURIComponent(keyword)}`;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await ready(tabId, hooks, { searchForm: true });
+        const filled = await evaluate(tabId, interactDouyinSearch, { action: 'fill', keyword });
+        if (!filled?.ready || filled.value !== keyword) throw new Error(filled?.reason || '未能向搜索框填入原关键词。');
+        await wait(300);
+        let submitted; let submissionError;
+        try { submitted = await evaluate(tabId, interactDouyinSearch, { action: 'submit', keyword }); }
+        catch (error) { submissionError = error; } // Full-page search may destroy the injection context.
+        if (!submissionError && !submitted?.submitted) throw new Error(submitted?.reason || '未能提交抖音搜索框。');
+        for (let poll = 0; poll < 40; poll += 1) {
+          const current = await tab(tabId);
+          if (current.status !== 'complete') { await wait(500); continue; }
+          const state = await evaluate(tabId, inspectDouyinPage);
+          if (state.gatewayError) await ready(tabId, hooks); // raises the specific gateway error
+          if (state.login || state.verification) await ready(tabId, hooks, { searchForm: true });
+          if (!sourceUrlFromDouyinModalUrl(current.url) && matchesDouyinDestination(current.url, expected) && current.status === 'complete') {
+            await wait(1300);
+            await ready(tabId, hooks);
+            const input = await evaluate(tabId, interactDouyinSearch, { action: 'inspect' });
+            if (!input?.ready || input.value !== keyword) throw new Error('搜索结果页的关键词与队列原词不一致，未采集。');
+            return;
+          }
+          await wait(500);
+        }
+        throw new Error(`已填写“${keyword}”，但抖音未进入对应搜索结果页；未采集其它关键词或首页推荐。请在任务页确认搜索按钮可用。`);
+      } catch (error) {
+        if (error.code !== 'DOUYIN_GATEWAY_ERROR' || attempt > 0) throw error;
+        await hooks.progress({ phase: 'retrying_search', message: '抖音返回 502，暂停 3 秒后回到首页，通过搜索框重试一次；不会反复刷新。' });
+        await wait(3000);
+        await navigate(tabId, 'https://www.douyin.com/');
+      }
+    }
   }
 
   async function openDouyin() {
@@ -148,14 +196,15 @@ export function createCollector(chromeApi, options = {}) {
       const created = await chromeApi.tabs.create({ url: 'https://www.douyin.com/', active: true });
       const searchTabId = created.id;
       activeTabId = searchTabId;
+      // Let the homepage and session initialize before interacting with its form.
+      await waitForDestination(searchTabId, 'https://www.douyin.com/');
       for (let queryIndex = 0; queryIndex < queries.length; queryIndex += 1) {
         const query = queries[queryIndex];
         const budget = queryBudget(queryIndex);
         const accepted = new Set();
         const baseProgress = Math.round(5 + queryIndex / queries.length * 85);
         await hooks.progress({ phase: 'searching', progress: baseProgress, message: `正在按原词搜索：${query.query}` });
-        await navigate(searchTabId, `https://www.douyin.com/search/${encodeURIComponent(query.query)}?type=general`);
-        await ready(searchTabId, hooks);
+        await searchByForm(searchTabId, query.query, hooks);
         await hooks.progress({ phase: 'filtering', message: `“${query.query}”：正在确认最多点赞、发布时间和视频筛选。` });
         let filterState;
         try {

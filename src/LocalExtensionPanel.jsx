@@ -6,7 +6,7 @@ import { saveDownload } from './extension-client.js';
 export function LocalExtensionPanel({ connected, version, onRefresh, onRestored, notify }) {
   const installedVersion = /^\d+\.\d+\.\d+$/.test(version || '') ? version.split('.').map(Number) : null;
   const needsUpdate = connected && installedVersion && (installedVersion[0] < 3 ||
-    (installedVersion[0] === 3 && installedVersion[1] === 0 && installedVersion[2] < 1));
+    (installedVersion[0] === 3 && installedVersion[1] === 0 && installedVersion[2] < 2));
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
   const fileInput = useRef(null);
@@ -39,10 +39,10 @@ export function LocalExtensionPanel({ connected, version, onRefresh, onRestored,
     <div className="local-extension-status"><HardDrive size={18} /><div><strong>{connected ? '本机素材库已连接' : '先连接抖音本机助手'}</strong>
       <p>{connected ? '素材和任务保存在此浏览器，不上传云数据库。' : '网页需要扩展才能操作你的抖音标签页；无需安装本地服务器。'}</p></div>
       <button type="button" onClick={onRefresh}><RefreshCw size={14} />检测连接</button></div>
-    {needsUpdate && <p className="local-extension-upgrade" role="status"><strong>当前助手 {version} 需要更新</strong>：旧版会跳过没有直接链接的抖音卡片。
-      <a href="/downloads/douyin-helper.zip?v=3.0.1" download>下载 3.0.1 修复版</a>，覆盖原扩展文件夹后，在扩展管理页点击“重新加载”，再刷新本站。请勿卸载，以免丢失本机素材。</p>}
+    {needsUpdate && <p className="local-extension-upgrade" role="status"><strong>当前助手 {version} 需要更新</strong>：新版先等抖音首页就绪，再通过搜索框提交原词；遇到 502 只重试一次，并明确提示原因。
+      <a href="/downloads/douyin-helper.zip?v=3.0.2" download>下载 3.0.2 修复版</a>，覆盖原扩展文件夹后，在扩展管理页点击“重新加载”，再刷新本站。请勿卸载，以免丢失本机素材。</p>}
     <details open={!connected || needsUpdate ? true : undefined}><summary>一次安装 · 数据管理 · 使用边界</summary>
-      <ol><li><a href="/downloads/douyin-helper.zip?v=3.0.1" download>下载抖音本机助手 3.0.1</a>，先解压到固定文件夹。当前为手动安装版，尚未上架扩展商店。</li>
+      <ol><li><a href="/downloads/douyin-helper.zip?v=3.0.2" download>下载抖音本机助手 3.0.2</a>，先解压到固定文件夹。当前为手动安装版，尚未上架扩展商店。</li>
         <li>在桌面 Chrome / Edge 的扩展管理中开启“开发者模式”，点击“加载已解压的扩展”，选择解压后的文件夹。</li>
         <li>回到本站，点击浏览器工具栏的助手图标，选择“授权当前网站”，同意后刷新本页。</li>
         <li>输入关键词再采集；需要登录或验证码时，在抖音页面手动完成。采集期间请保持浏览器和任务标签页打开。</li></ol>

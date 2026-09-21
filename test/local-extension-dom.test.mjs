@@ -21,9 +21,11 @@ test('回归61张无链接卡片：点击原卡片取真实地址、还原搜索
     const context = await browser.newContext();
     // All Douyin requests are locally fulfilled fixtures, never the live site/account.
     await context.route('**/*', (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><meta charset="UTF-8"><body>
+      <header><form onsubmit="event.preventDefault()"><input data-e2e="searchbar-input" placeholder="搜索你感兴趣的内容"><button type="button" data-e2e="searchbar-button">搜索</button></form></header>
       <main>${Array.from({ length: 61 }, (_, index) => `<article class="search-result-card" data-fixture-index="${index}">
         <div>00:20</div><div>${index + 10}</div><div>奶瓶产品演示第${index}条</div><div>@独立作者${index}</div>
         </article>`).join('')}</main><script>
+      document.querySelector('header button').onclick = () => history.pushState({}, '', '/root/search/' + encodeURIComponent(document.querySelector('input').value) + '?aid=native');
       const cards = [...document.querySelectorAll('article')];
       cards.forEach((card, index) => card.onclick = () => {
         const url = new URL(location.href); url.searchParams.set('modal_id', '738272718205485' + String(index).padStart(4, '0'));

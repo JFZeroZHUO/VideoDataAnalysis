@@ -29,8 +29,8 @@ test('online UI reads extension data, supports exact keywords, ordinary mode, se
       calls.push(message);
       queueMicrotask(() => {
         const path = new URL(message.url, this.location.origin).pathname;
-        const payload = path === '/api/meta' ? { collectorAvailable: true, localExtension: { connected: true, version: '3.0.0' },
-          browserHelper: { connected: true, version: '3.0.0' }, materialCounts: { douyin: 1 }, latestJobs: {},
+        const payload = path === '/api/meta' ? { collectorAvailable: true, localExtension: { connected: true, version: '3.0.1' },
+          browserHelper: { connected: true, version: '3.0.1' }, materialCounts: { douyin: 1 }, latestJobs: {},
           searchStates: { douyin: { keywords: ['舞蹈'], requireAiEvidence: false, resultScope: 'current' } } }
           : path === '/api/materials' ? { count: 1, materials: rows, facets: {} }
           : path === '/api/collect/douyin' ? { id: 'job-1', platform: 'douyin', status: 'running', keywords: ['舞蹈'], requireAiEvidence: false }
@@ -61,7 +61,7 @@ test('online UI reads extension data, supports exact keywords, ordinary mode, se
     assert.equal(fetches.length, 1);
     assert.match(JSON.stringify(app.toJSON()), /不上传云数据库/);
     assert.match(JSON.stringify(app.toJSON()), /当前助手 .*需要更新/);
-    assert.match(JSON.stringify(app.toJSON()), /3.0.1 修复版/);
+    assert.match(JSON.stringify(app.toJSON()), /3.0.2 修复版/);
   } finally {
     if (app) await act(async () => app.unmount());
     globalThis.window = previous.window; globalThis.fetch = previous.fetch; globalThis.IS_REACT_ACT_ENVIRONMENT = previous.act;
