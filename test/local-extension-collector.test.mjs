@@ -156,7 +156,7 @@ test('扩展产物可以实际构建，ZIP仅含允许文件，不含Node或本�
     const archive = unzipSync(new Uint8Array(await readFile(result.zipPath)));
     assert.deepEqual(Object.keys(archive).sort(), ['background.js', 'bridge.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js']);
     const manifest = JSON.parse(new TextDecoder().decode(archive['manifest.json']));
-    assert.equal(manifest.version, '3.0.0');
+    assert.equal(manifest.version, '3.0.1');
     assert.deepEqual(manifest.host_permissions, ['https://www.douyin.com/*']);
     assert.equal(manifest.permissions.some((permission) => ['cookies', 'debugger', '<all_urls>'].includes(permission)), false);
     const source = new TextDecoder().decode(archive['background.js']);

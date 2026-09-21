@@ -1,4 +1,5 @@
-import { extractSearchCards, extractDouyinDetail, normalizeDouyinRows } from 'douyin-dom-core';
+import { extractSearchCards, extractDouyinDetail, normalizeDouyinRows, createCollectionDiagnostics } from 'douyin-dom-core';
+import { resolveExtensionCard } from './card-navigation.mjs';
 import { applyDouyinPopularFilters } from '../server/douyin-search-filter.mjs';
 import { sourceUrlFromDouyinModalUrl } from '../server/douyin-card-schema.mjs';
 import { parseCompactNumber } from '../server/number-utils.mjs';
@@ -132,8 +133,7 @@ export function createCollector(chromeApi, options = {}) {
     const requestedLimit = Number(task.maxResults);
     const limit = Math.max(queries.length, Math.min(2000, Math.max(1, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 200)));
     const queryBudget = (index) => Math.floor(limit / queries.length) + (index < limit % queries.length ? 1 : 0);
-    const diagnostics = { searchCardCount: 0, extractedCardCount: 0, collectedCount: 0, linkFailureCount: 0,
-      skippedQueryCount: 0, failureReasons: {}, failureSamples: [] };
+    const diagnostics = createCollectionDiagnostics();
     const stored = new Set();
     let detailTabId = null;
     let successfulQueries = 0;
@@ -182,7 +182,21 @@ export function createCollector(chromeApi, options = {}) {
             if (seen.has(identity)) continue;
             seen.add(identity); fresh += 1; diagnostics.searchCardCount += 1;
             let candidate = normalizeSearchCandidate(row, query, filterState);
-            if (!candidate) { diagnostics.linkFailureCount += 1; warn(query.query, 'link_missing', '卡片未公开可确认的视频链接，未猜测链接或用其它卡片代替。'); continue; }
+            if (!candidate && row.cardKey) {
+              activeTabId = searchTabId;
+              await ready(searchTabId, hooks);
+              await hooks.progress({ phase: 'resolving_link', searchCardCount: diagnostics.searchCardCount,
+                collectionDiagnostics: diagnostics, message: `正在取得原卡片的视频链接：${row.title.slice(0, 60)}${task.requireAiEvidence ? '' : '（不核验 AI 声明）'}` });
+              const restoreFailures = diagnostics.restoreFailureCount;
+              const result = await resolveExtensionCard({ chromeApi, tabId: searchTabId, row, evaluate, wait, diagnostics, query: query.query });
+              if (diagnostics.restoreFailureCount > restoreFailures) {
+                await hooks.progress({ collectionDiagnostics: diagnostics });
+                throw new Error('打开视频后未能安全恢复原搜索页，已暂停后续采集以避免数据串条。已入库素材保留，请返回搜索页后重新开始。');
+              }
+              if (!result.rows.length) continue;
+              candidate = normalizeSearchCandidate(result.rows[0], query, filterState);
+            } else if (candidate) diagnostics.directUrlCount += 1;
+            if (!candidate) { diagnostics.linkFailureCount += 1; warn(query.query, 'link_missing', '卡片缺少链接及可确认的身份标记，未猜测链接或用其它卡片代替。'); continue; }
             if (accepted.has(candidate.sourceUrl)) continue;
             diagnostics.extractedCardCount += 1;
             if (task.requireAiEvidence === true) {

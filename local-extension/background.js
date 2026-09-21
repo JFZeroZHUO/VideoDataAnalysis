@@ -2,7 +2,7 @@ import { createLocalStore } from './database.mjs';
 import { createLocalService } from './service.mjs';
 import { createCollector } from './collector.mjs';
 
-export const VERSION = '3.0.0';
+export const VERSION = '3.0.1';
 const CHANNEL = 'video-data-analysis';
 const ORIGINS_KEY = 'authorizedOrigins';
 

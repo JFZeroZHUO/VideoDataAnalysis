@@ -31,6 +31,8 @@
 .local-extension-panel ol { margin: 12px 0; padding-left: 24px; }
 .local-extension-panel li { margin-block: 8px; }
 .local-extension-panel a { color: var(--teal); font-weight: 700; text-underline-offset: 3px; }
+.local-extension-upgrade { margin: 12px 0; padding: 12px 16px; border-left: 3px solid var(--amber); background: var(--paper); color: var(--ink-2); }
+.local-extension-upgrade strong { color: var(--amber); }
 .local-privacy-note { margin: 12px 0 0; color: var(--muted); }
 .local-privacy-note svg { vertical-align: middle; margin-right: 5px; }
 .local-data-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }

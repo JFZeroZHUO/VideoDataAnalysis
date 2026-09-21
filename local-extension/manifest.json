@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "抖音素材本机助手",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "在自己的 Chrome 中采集抖音公开素材，数据仅保存在本机。",
   "minimum_chrome_version": "120",
   "permissions": ["tabs", "scripting", "storage"],
